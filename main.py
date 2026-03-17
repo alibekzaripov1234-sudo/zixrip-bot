@@ -18,7 +18,7 @@ def detect_platform(url):
     return None
 
 def download_video(url):
-    output_path = "video.mp4"
+    output_path = "/tmp/video.mp4"
     ydl_opts = {
         "outtmpl": output_path,
         "format": "best[ext=mp4]/best",
