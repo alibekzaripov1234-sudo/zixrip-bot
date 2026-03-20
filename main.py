@@ -31,58 +31,38 @@ def detect_platform(url):
     return None
 
 
-# ✅ СТАБИЛЬНОЕ ОБЛАКО (исправлено)
+# ☁️ загрузка в облако (с fallback)
 def upload_to_gofile(file_path):
-    for i in range(3):
+    for _ in range(2):
         try:
-            server_res = requests.get("https://api.gofile.io/getServer")
+            res = requests.get("https://api.gofile.io/getServer")
+            if res.status_code != 200:
+                continue
 
-            if server_res.status_code != 200:
-                raise Exception("Нет ответа от GoFile")
-
-            server_json = server_res.json()
-
-            if "data" not in server_json:
-                raise Exception("Неверный ответ сервера")
-
-            server = server_json["data"]["server"]
+            server = res.json()["data"]["server"]
 
             with open(file_path, "rb") as f:
-                upload_res = requests.post(
+                upload = requests.post(
                     f"https://{server}.gofile.io/uploadFile",
                     files={"file": f}
                 )
 
-            upload_json = upload_res.json()
+            return upload.json()["data"]["downloadPage"]
 
-            if "data" not in upload_json:
-                raise Exception("Ошибка загрузки")
-
-            return upload_json["data"]["downloadPage"]
-
-        except Exception as e:
-            print(f"Ошибка загрузки попытка {i+1}:", e)
+        except:
             time.sleep(2)
 
-    raise Exception("Ошибка загрузки в облако")
+    return None
 
 
-# ✅ СТАБИЛЬНОЕ СКАЧИВАНИЕ
+# 🔥 стабильное скачивание
 def download_video(url, quality="best", audio_only=False):
     file_id = str(uuid.uuid4())
 
     if audio_only:
         fmt = "bestaudio/best"
     else:
-        # 🔥 фикс — убрали 1080p (ломается часто)
-        if quality == "high":
-            fmt = "best[height<=720]"
-        elif quality == "medium":
-            fmt = "best[height<=480]"
-        elif quality == "low":
-            fmt = "best[height<=360]"
-        else:
-            fmt = "best[height<=720]"
+        fmt = "best[height<=720]"
 
     ydl_opts = {
         "outtmpl": f"/tmp/{file_id}.%(ext)s",
@@ -92,9 +72,12 @@ def download_video(url, quality="best", audio_only=False):
         "retries": 10,
         "fragment_retries": 10,
         "nocheckcertificate": True,
+        "concurrent_fragment_downloads": 1,
+        "http_chunk_size": 1048576,
         "merge_output_format": "mp4",
         "http_headers": {
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0",
+            "Accept-Language": "en-US,en;q=0.9"
         },
     }
 
@@ -158,14 +141,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 link = upload_to_gofile(file_path)
                 os.remove(file_path)
 
-                await update.message.reply_text(
-                    f"📦 Видео большое ({round(file_size)} MB)\n"
-                    f"🔗 Скачать: {link}"
-                )
+                if not link:
+                    await update.message.reply_text(
+                        "⚠️ Облако временно недоступно.\nВот ссылка:\n" + url
+                    )
+                else:
+                    await update.message.reply_text(
+                        f"📦 Видео большое ({round(file_size)} MB)\n"
+                        f"🔗 Скачать: {link}"
+                    )
             else:
                 await msg.edit_text("📤 Отправляю...")
                 with open(file_path, "rb") as f:
                     await update.message.reply_video(video=f, supports_streaming=True)
+
                 os.remove(file_path)
                 await msg.delete()
 
@@ -196,10 +185,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             link = upload_to_gofile(file_path)
             os.remove(file_path)
 
-            await query.message.reply_text(
-                f"📦 Видео большое ({round(file_size)} MB)\n"
-                f"🔗 Скачать: {link}"
-            )
+            if not link:
+                await query.message.reply_text(
+                    "⚠️ Облако временно недоступно.\nВот ссылка:\n" + url
+                )
+            else:
+                await query.message.reply_text(
+                    f"📦 Видео большое ({round(file_size)} MB)\n"
+                    f"🔗 Скачать: {link}"
+                )
         else:
             await msg.edit_text("📤 Отправляю...")
             with open(file_path, "rb") as f:
