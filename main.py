@@ -143,7 +143,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         file_size = os.path.getsize(file_path) / (1024 * 1024)
 
-        if file_size > 49:
+        if file_size > 1900:
             await msg.edit_text("☁️ Загружаю в облако...")
             link = upload_to_gofile(file_path)
             os.remove(file_path)
