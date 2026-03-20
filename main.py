@@ -31,34 +31,58 @@ def detect_platform(url):
     return None
 
 
-# ☁️ загрузка в облако
+# ✅ СТАБИЛЬНОЕ ОБЛАКО (исправлено)
 def upload_to_gofile(file_path):
-    server = requests.get("https://api.gofile.io/getServer").json()["data"]["server"]
+    for i in range(3):
+        try:
+            server_res = requests.get("https://api.gofile.io/getServer")
 
-    with open(file_path, "rb") as f:
-        response = requests.post(
-            f"https://{server}.gofile.io/uploadFile",
-            files={"file": f}
-        ).json()
+            if server_res.status_code != 200:
+                raise Exception("Нет ответа от GoFile")
 
-    return response["data"]["downloadPage"]
+            server_json = server_res.json()
+
+            if "data" not in server_json:
+                raise Exception("Неверный ответ сервера")
+
+            server = server_json["data"]["server"]
+
+            with open(file_path, "rb") as f:
+                upload_res = requests.post(
+                    f"https://{server}.gofile.io/uploadFile",
+                    files={"file": f}
+                )
+
+            upload_json = upload_res.json()
+
+            if "data" not in upload_json:
+                raise Exception("Ошибка загрузки")
+
+            return upload_json["data"]["downloadPage"]
+
+        except Exception as e:
+            print(f"Ошибка загрузки попытка {i+1}:", e)
+            time.sleep(2)
+
+    raise Exception("Ошибка загрузки в облако")
 
 
-# 🔥 стабильное скачивание
+# ✅ СТАБИЛЬНОЕ СКАЧИВАНИЕ
 def download_video(url, quality="best", audio_only=False):
     file_id = str(uuid.uuid4())
 
     if audio_only:
         fmt = "bestaudio/best"
     else:
+        # 🔥 фикс — убрали 1080p (ломается часто)
         if quality == "high":
-            fmt = "bestvideo[height<=1080]+bestaudio/best"
+            fmt = "best[height<=720]"
         elif quality == "medium":
-            fmt = "bestvideo[height<=480]+bestaudio/best"
+            fmt = "best[height<=480]"
         elif quality == "low":
-            fmt = "bestvideo[height<=360]+bestaudio/best"
+            fmt = "best[height<=360]"
         else:
-            fmt = "bestvideo+bestaudio/best"
+            fmt = "best[height<=720]"
 
     ydl_opts = {
         "outtmpl": f"/tmp/{file_id}.%(ext)s",
@@ -91,7 +115,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👋 Привет!\n"
         "Я скачиваю видео из:\n"
         "▶️ YouTube\n📸 Instagram\n🎵 TikTok\n\n"
-        "Просто отправь ссылку!"
+        "Отправь ссылку!"
     )
 
 
@@ -114,7 +138,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             [
                 InlineKeyboardButton("📺 480p", callback_data="medium"),
-                InlineKeyboardButton("🎬 1080p", callback_data="high"),
+                InlineKeyboardButton("🎬 720p", callback_data="high"),
             ],
         ]
         await update.message.reply_text(
