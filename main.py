@@ -3,6 +3,7 @@ import os
 import yt_dlp
 import time
 import uuid
+import requests
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -30,25 +31,25 @@ def detect_platform(url):
     return None
 
 
+# ☁️ загрузка в облако
+def upload_to_gofile(file_path):
+    server = requests.get("https://api.gofile.io/getServer").json()["data"]["server"]
+
+    with open(file_path, "rb") as f:
+        response = requests.post(
+            f"https://{server}.gofile.io/uploadFile",
+            files={"file": f}
+        ).json()
+
+    return response["data"]["downloadPage"]
+
+
+# 🔥 стабильное скачивание
 def download_video(url, quality="best", audio_only=False):
     file_id = str(uuid.uuid4())
 
     if audio_only:
-        out = f"/tmp/{file_id}.%(ext)s"
-        ydl_opts = {
-            "outtmpl": out,
-            "format": "bestaudio/best",
-            "quiet": True,
-            "noplaylist": True,
-            "retries": 5,
-            "nocheckcertificate": True,
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                }
-            ],
-        }
+        fmt = "bestaudio/best"
     else:
         if quality == "high":
             fmt = "bestvideo[height<=1080]+bestaudio/best"
@@ -59,44 +60,38 @@ def download_video(url, quality="best", audio_only=False):
         else:
             fmt = "bestvideo+bestaudio/best"
 
-        out = f"/tmp/{file_id}.%(ext)s"
-        ydl_opts = {
-            "outtmpl": out,
-            "format": fmt,
-            "quiet": True,
-            "noplaylist": True,
-            "retries": 5,
-            "nocheckcertificate": True,
-            "merge_output_format": "mp4",
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0"
-            },
-        }
+    ydl_opts = {
+        "outtmpl": f"/tmp/{file_id}.%(ext)s",
+        "format": fmt,
+        "quiet": True,
+        "noplaylist": True,
+        "retries": 10,
+        "fragment_retries": 10,
+        "nocheckcertificate": True,
+        "merge_output_format": "mp4",
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0"
+        },
+    }
 
-    for i in range(3):
+    for i in range(5):
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                file_path = ydl.prepare_filename(info)
-
-                if audio_only:
-                    file_path = file_path.replace(".webm", ".mp3").replace(".m4a", ".mp3")
-
-                return file_path
+                return ydl.prepare_filename(info)
         except Exception as e:
             print(f"Ошибка попытка {i+1}:", e)
-            time.sleep(2)
+            time.sleep(3)
 
-    raise Exception("Не удалось скачать")
+    raise Exception("Ошибка скачивания")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я скачиваю видео из:\n"
-        "▶️ YouTube\n"
-        "📸 Instagram\n"
-        "🎵 TikTok\n\n"
-        "Отправь ссылку!"
+        "👋 Привет!\n"
+        "Я скачиваю видео из:\n"
+        "▶️ YouTube\n📸 Instagram\n🎵 TikTok\n\n"
+        "Просто отправь ссылку!"
     )
 
 
@@ -105,7 +100,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     platform = detect_platform(url)
 
     if not platform:
-        await update.message.reply_text("❌ Не распознал ссылку")
+        await update.message.reply_text("❌ Ссылка не поддерживается")
         return
 
     context.user_data["url"] = url
@@ -128,13 +123,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         msg = await update.message.reply_text(f"⏳ Скачиваю с {platform}...")
+
         try:
             file_path = download_video(url)
-            await msg.edit_text("📤 Отправляю...")
-            with open(file_path, "rb") as f:
-                await update.message.reply_video(video=f, supports_streaming=True)
-            os.remove(file_path)
-            await msg.delete()
+
+            file_size = os.path.getsize(file_path) / (1024 * 1024)
+
+            if file_size > 49:
+                await msg.edit_text("☁️ Загружаю в облако...")
+                link = upload_to_gofile(file_path)
+                os.remove(file_path)
+
+                await update.message.reply_text(
+                    f"📦 Видео большое ({round(file_size)} MB)\n"
+                    f"🔗 Скачать: {link}"
+                )
+            else:
+                await msg.edit_text("📤 Отправляю...")
+                with open(file_path, "rb") as f:
+                    await update.message.reply_video(video=f, supports_streaming=True)
+                os.remove(file_path)
+                await msg.delete()
+
         except Exception as e:
             await msg.edit_text(f"❌ Ошибка: {e}")
 
@@ -155,16 +165,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             audio_only=(choice == "audio"),
         )
 
-        await msg.edit_text("📤 Отправляю...")
+        file_size = os.path.getsize(file_path) / (1024 * 1024)
 
-        with open(file_path, "rb") as f:
-            if choice == "audio":
-                await query.message.reply_audio(audio=f)
-            else:
-                await query.message.reply_video(video=f, supports_streaming=True)
+        if file_size > 49:
+            await msg.edit_text("☁️ Загружаю в облако...")
+            link = upload_to_gofile(file_path)
+            os.remove(file_path)
 
-        os.remove(file_path)
-        await msg.delete()
+            await query.message.reply_text(
+                f"📦 Видео большое ({round(file_size)} MB)\n"
+                f"🔗 Скачать: {link}"
+            )
+        else:
+            await msg.edit_text("📤 Отправляю...")
+            with open(file_path, "rb") as f:
+                if choice == "audio":
+                    await query.message.reply_audio(audio=f)
+                else:
+                    await query.message.reply_video(video=f, supports_streaming=True)
+
+            os.remove(file_path)
+            await msg.delete()
 
     except Exception as e:
         await msg.edit_text(f"❌ Ошибка: {e}")
