@@ -16,22 +16,16 @@ from telegram.ext import (
 )
 
 BOT_TOKEN = "8790787712:AAGWAo0Eghq9by6CQrhhe2bFpzVnqBu9sds"
-CHANNEL = "@Zixrip_bot"
 
 logging.basicConfig(level=logging.INFO)
 
 
-def detect_platform(url):
-    if "youtube.com" in url or "youtu.be" in url:
-        return "YouTube"
-    elif "instagram.com" in url:
-        return "Instagram"
-    elif "tiktok.com" in url:
-        return "TikTok"
-    return None
+# ✅ только YouTube
+def is_youtube(url):
+    return "youtube.com" in url or "youtu.be" in url
 
 
-# ☁️ загрузка в облако (с fallback)
+# ☁️ облако
 def upload_to_gofile(file_path):
     for _ in range(2):
         try:
@@ -55,14 +49,21 @@ def upload_to_gofile(file_path):
     return None
 
 
-# 🔥 стабильное скачивание
+# 🔥 стабильный YouTube
 def download_video(url, quality="best", audio_only=False):
     file_id = str(uuid.uuid4())
 
     if audio_only:
         fmt = "bestaudio/best"
     else:
-        fmt = "best[height<=720]"
+        if quality == "high":
+            fmt = "best[height<=720]"
+        elif quality == "medium":
+            fmt = "best[height<=480]"
+        elif quality == "low":
+            fmt = "best[height<=360]"
+        else:
+            fmt = "best[height<=720]"
 
     ydl_opts = {
         "outtmpl": f"/tmp/{file_id}.%(ext)s",
@@ -72,12 +73,9 @@ def download_video(url, quality="best", audio_only=False):
         "retries": 10,
         "fragment_retries": 10,
         "nocheckcertificate": True,
-        "concurrent_fragment_downloads": 1,
-        "http_chunk_size": 1048576,
         "merge_output_format": "mp4",
         "http_headers": {
             "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9"
         },
     }
 
@@ -96,70 +94,35 @@ def download_video(url, quality="best", audio_only=False):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет!\n"
-        "Я скачиваю видео из:\n"
-        "▶️ YouTube\n📸 Instagram\n🎵 TikTok\n\n"
+        "Я скачиваю видео только с YouTube 🎬\n\n"
         "Отправь ссылку!"
     )
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    platform = detect_platform(url)
 
-    if not platform:
-        await update.message.reply_text("❌ Ссылка не поддерживается")
+    if not is_youtube(url):
+        await update.message.reply_text("❌ Поддерживается только YouTube")
         return
 
     context.user_data["url"] = url
-    context.user_data["platform"] = platform
 
-    if platform == "YouTube":
-        keyboard = [
-            [
-                InlineKeyboardButton("🎵 MP3", callback_data="audio"),
-                InlineKeyboardButton("📱 360p", callback_data="low"),
-            ],
-            [
-                InlineKeyboardButton("📺 480p", callback_data="medium"),
-                InlineKeyboardButton("🎬 720p", callback_data="high"),
-            ],
-        ]
-        await update.message.reply_text(
-            "Выбери качество:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    else:
-        msg = await update.message.reply_text(f"⏳ Скачиваю с {platform}...")
+    keyboard = [
+        [
+            InlineKeyboardButton("🎵 MP3", callback_data="audio"),
+            InlineKeyboardButton("📱 360p", callback_data="low"),
+        ],
+        [
+            InlineKeyboardButton("📺 480p", callback_data="medium"),
+            InlineKeyboardButton("🎬 720p", callback_data="high"),
+        ],
+    ]
 
-        try:
-            file_path = download_video(url)
-
-            file_size = os.path.getsize(file_path) / (1024 * 1024)
-
-            if file_size > 49:
-                await msg.edit_text("☁️ Загружаю в облако...")
-                link = upload_to_gofile(file_path)
-                os.remove(file_path)
-
-                if not link:
-                    await update.message.reply_text(
-                        "⚠️ Облако временно недоступно.\nВот ссылка:\n" + url
-                    )
-                else:
-                    await update.message.reply_text(
-                        f"📦 Видео большое ({round(file_size)} MB)\n"
-                        f"🔗 Скачать: {link}"
-                    )
-            else:
-                await msg.edit_text("📤 Отправляю...")
-                with open(file_path, "rb") as f:
-                    await update.message.reply_video(video=f, supports_streaming=True)
-
-                os.remove(file_path)
-                await msg.delete()
-
-        except Exception as e:
-            await msg.edit_text(f"❌ Ошибка: {e}")
+    await update.message.reply_text(
+        "Выбери качество:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -187,12 +150,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if not link:
                 await query.message.reply_text(
-                    "⚠️ Облако временно недоступно.\nВот ссылка:\n" + url
+                    "⚠️ Видео большое. Вот ссылка:\n" + url
                 )
             else:
                 await query.message.reply_text(
-                    f"📦 Видео большое ({round(file_size)} MB)\n"
-                    f"🔗 Скачать: {link}"
+                    f"📦 Видео ({round(file_size)} MB)\n🔗 {link}"
                 )
         else:
             await msg.edit_text("📤 Отправляю...")
